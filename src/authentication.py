@@ -6,7 +6,7 @@ from typing import Tuple, overload
 from uuid import UUID
 from nexo.database.handlers import PostgreSQLHandler, RedisHandler
 from nexo.enums.organization import OrganizationRole
-from nexo.schemas.application import ApplicationContext
+from nexo.schemas.application import ApplicationContext, OptApplicationContext
 from nexo.schemas.connection import ConnectionContext
 from nexo.schemas.security.api_key import validate as validate_api_key
 from nexo.schemas.security.authentication import (
@@ -38,13 +38,17 @@ class Backend(AuthenticationBackend):
     def __init__(
         self,
         *,
-        application_context: ApplicationContext,
+        application_context: OptApplicationContext = None,
         database: PostgreSQLHandler[Base],
         cache: RedisHandler,
         public_key: RsaKey,
     ):
         super().__init__()
-        self._application_context = application_context
+        self._application_context = (
+            application_context
+            if application_context is not None
+            else ApplicationContext.new()
+        )
         self._database = database
         self._cache = cache
         self._identity_provider = IdentityProvider(database=database, cache=cache)
