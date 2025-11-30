@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import Annotated
-from nexo.types.string import SeqOfStrs
+from nexo.enums.connection import OptSeqOfMethods
+from nexo.types.string import SeqOfStrs, OptSeqOfStrs
 from .constants import (
     ALLOW_METHODS,
     ALLOW_HEADERS,
@@ -45,6 +46,20 @@ class RateLimiterConfig(BaseModel):
     ] = 300
 
 
+class Rule(BaseModel):
+    path: Annotated[str, Field(..., description="Path")]
+    methods: Annotated[OptSeqOfMethods, Field(None, description="Methods")] = None
+    ips: Annotated[OptSeqOfStrs, Field(None, description="IPs")] = None
+
+
+ListOfRules = list[Rule]
+OptListOfRules = ListOfRules | None
+
+
+class SecurityConfig(BaseModel):
+    rules: Annotated[OptListOfRules, Field(None, description="Rules")] = None
+
+
 class MiddlewareConfig(BaseModel):
     cors: Annotated[
         CORSConfig,
@@ -61,6 +76,9 @@ class MiddlewareConfig(BaseModel):
             description="Rate limiter's configurations",
         ),
     ] = RateLimiterConfig()
+    security: Annotated[
+        SecurityConfig, Field(SecurityConfig(), description="Security's configurations")
+    ] = SecurityConfig()
 
 
 class MiddlewareConfigMixin(BaseModel):

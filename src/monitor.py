@@ -54,7 +54,7 @@ def monitor_request(
         target=Target.INTERNAL,
     )
 
-    async def dependency(request: Request, call_next: RequestResponseEndpoint):
+    async def dispatch(request: Request, call_next: RequestResponseEndpoint):
         response = await call_next(request)
 
         content_type = response.headers.get(Header.CONTENT_TYPE)
@@ -184,4 +184,4 @@ def monitor_request(
 
         return final_response
 
-    return dependency
+    return dispatch
