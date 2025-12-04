@@ -161,7 +161,9 @@ class Backend(AuthenticationBackend):
         connection_context: ConnectionContext,
     ) -> Tuple[RequestCredentials, RequestUser]:
         validate_api_key(
-            authorization.credentials, self._application_context.environment
+            authorization.credentials,
+            self._application_context.name,
+            self._application_context.environment,
         )
         user_organization_id = (
             await self._identity_provider.get_user_organization_id_from_api_key(
