@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from fastapi import status
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -51,9 +50,6 @@ class StateMiddleware:
 
             # Connection ID
             scope["state"]["connection_id"] = uuid4()
-
-            # Execution timestamp
-            scope["state"]["executed_at"] = datetime.now(tz=timezone.utc)
 
             # Authorization
             authorization = AuthorizationFactory.extract(conn=conn, auto_error=False)
