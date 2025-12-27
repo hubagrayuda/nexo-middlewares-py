@@ -35,9 +35,8 @@ class IdentityProvider:
     ) -> None:
         self._database = database
         self._cache = cache
-        self._namespace = self._cache.config.additional.build_namespace(
+        self._namespace = self._cache.config.build_namespace(
             "identity",
-            use_self_base=True,
             origin=CacheOrigin.SERVICE,
             layer=CacheLayer.MIDDLEWARE,
         )

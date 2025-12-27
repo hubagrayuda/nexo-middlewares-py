@@ -53,7 +53,7 @@ maleo-utils==0.0.80
 motor==3.7.1
 mypy_extensions==1.1.0
 nexo-crypto==0.0.5
-nexo-database==0.0.9
+nexo-database==0.0.10
 nexo-enums==0.0.5
 nexo-infra==0.0.9
 nexo-logging==0.0.5

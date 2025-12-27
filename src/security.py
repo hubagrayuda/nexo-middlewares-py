@@ -16,9 +16,8 @@ def secure_request(
     config: SecurityConfig,
     cache: RedisHandler,
 ):
-    namespace = cache.config.additional.build_namespace(
+    namespace = cache.config.build_namespace(
         "security",
-        use_self_base=True,
         origin=CacheOrigin.SERVICE,
         layer=CacheLayer.MIDDLEWARE,
     )
