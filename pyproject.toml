@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nexo-middlewares"
-version = "0.0.13"
+version = "0.0.14"
 description = "Middlewares package for Nexo"
 authors = [
     { name = "Agra Bima Yuda", email = "hub.agrayuda@gmail.com" }
@@ -55,11 +55,11 @@ dependencies = [
     "motor>=3.7.1",
     "mypy_extensions>=1.1.0",
     "nexo-crypto>=0.0.5",
-    "nexo-database>=0.0.11",
+    "nexo-database>=0.0.12",
     "nexo-enums>=0.0.5",
-    "nexo-infra>=0.0.10",
+    "nexo-infra>=0.0.12",
     "nexo-logging>=0.0.5",
-    "nexo-schemas>=0.0.10",
+    "nexo-schemas>=0.0.11",
     "nexo-types>=0.0.5",
     "nexo-utils>=0.0.5",
     "nodeenv>=1.9.1",
