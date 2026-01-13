@@ -84,7 +84,7 @@ def secure_request(
                     allowed = True
 
         await cache.manager.client.async_client.set(
-            cache_key, "True" if allowed else "False", ex=Expiration.EXP_1MO
+            cache_key, "True" if allowed else "False", ex=Expiration.EXP_1MO.value
         )
 
         if not allowed:
