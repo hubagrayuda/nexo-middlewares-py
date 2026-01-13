@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nexo-middlewares"
-version = "0.0.19"
+version = "0.0.21"
 description = "Middlewares package for Nexo"
 authors = [
     { name = "Agra Bima Yuda", email = "hub.agrayuda@gmail.com" }

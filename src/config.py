@@ -9,6 +9,10 @@ from .constants import (
 )
 
 
+class AuthenticationConfig(BaseModel):
+    strict: Annotated[bool, Field(True, description="Strict authentication")] = True
+
+
 class CORSConfig(BaseModel):
     allow_origins: Annotated[SeqOfStrs, Field([], description="Allowed origins")] = []
     allow_methods: Annotated[
@@ -61,6 +65,13 @@ class SecurityConfig(BaseModel):
 
 
 class MiddlewareConfig(BaseModel):
+    authentication: Annotated[
+        AuthenticationConfig,
+        Field(
+            AuthenticationConfig(),
+            description="Authentication middleware's configurations",
+        ),
+    ] = AuthenticationConfig()
     cors: Annotated[
         CORSConfig,
         Field(CORSConfig(), description="CORS middleware's configurations"),

@@ -29,6 +29,7 @@ from nexo.schemas.security.impersonation import Impersonation
 from nexo.schemas.security.token import Domain
 from nexo.types.datetime import OptDatetime
 from nexo.types.uuid import OptUUID
+from .config import AuthenticationConfig
 from .identity import IdentityProvider
 from .models import Base
 from .schemas import UserSchema, OrganizationSchema, OptOrganizationSchema
@@ -42,6 +43,7 @@ class Backend(AuthenticationBackend):
         database: PostgreSQLHandler[Base],
         cache: RedisHandler,
         public_key: RsaKey,
+        config: AuthenticationConfig,
     ):
         super().__init__()
         self._application_context = (
@@ -53,6 +55,7 @@ class Backend(AuthenticationBackend):
         self._cache = cache
         self._identity_provider = IdentityProvider(database=database, cache=cache)
         self._public_key = public_key
+        self._config = config
 
     @overload
     async def _get_credentials(
@@ -348,6 +351,8 @@ class Backend(AuthenticationBackend):
 
                 return request_credentials, request_user
             except Exception as e:
-                raise AuthenticationError(
-                    f"Exception occured while authenticating: {e}"
-                ) from e
+                if self._config.strict:
+                    raise AuthenticationError(
+                        f"Exception occured while authenticating: {e}"
+                    ) from e
+                return RequestCredentials(), RequestUser()
