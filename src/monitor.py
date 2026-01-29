@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
 from fastapi import status, HTTPException, Request
+from fastapi.responses import JSONResponse
 from typing import Any
 from starlette.middleware.base import RequestResponseEndpoint
 from nexo.enums.connection import Header
@@ -161,6 +162,16 @@ def monitor_request(
                 )
                 operation.log(logger, LogLevel.ERROR)
                 operation.publish(logger, publishers)
+
+                cleaned_response = validated_response
+                cleaned_response.other = None
+                final_response = JSONResponse(
+                    content=cleaned_response,
+                    status_code=final_response.status_code,
+                    headers=final_response.headers,
+                    media_type=final_response.media_type,
+                    background=final_response.background,
+                )
         except Exception:
             decoded_body = response_body.decode(errors="replace")
             if len(decoded_body) > config.max_size:
