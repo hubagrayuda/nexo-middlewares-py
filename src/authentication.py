@@ -1,8 +1,7 @@
 from Crypto.PublicKey.RSA import RsaKey
-from datetime import datetime, timezone
 from fastapi.requests import HTTPConnection
 from starlette.authentication import AuthenticationBackend, AuthenticationError
-from typing import Tuple, overload
+from typing import Tuple
 from uuid import UUID
 from nexo.database.handlers import PostgreSQLHandler, RedisHandler
 from nexo.enums.organization import OrganizationRole
@@ -16,7 +15,9 @@ from nexo.schemas.security.authentication import (
     BaseCredentials,
     BaseUser,
     is_authenticated,
+    is_personal,
     is_tenant,
+    is_system,
 )
 from nexo.schemas.security.authorization import (
     BaseAuthorization,
@@ -25,14 +26,12 @@ from nexo.schemas.security.authorization import (
     is_bearer_token,
     is_api_key,
 )
+from nexo.schemas.security.enums import Domain
 from nexo.schemas.security.impersonation import Impersonation
-from nexo.schemas.security.token import Domain
-from nexo.types.datetime import OptDatetime
-from nexo.types.uuid import OptUUID
 from .config import AuthenticationConfig
 from .identity import IdentityProvider
 from .models import Base
-from .schemas import UserSchema, OrganizationSchema, OptOrganizationSchema
+from .schemas import PrincipalSchema
 
 
 class Backend(AuthenticationBackend):
@@ -57,104 +56,82 @@ class Backend(AuthenticationBackend):
         self._public_key = public_key
         self._config = config
 
-    @overload
-    async def _get_credentials(
-        self,
-        user_id: UUID,
-        organization_id: UUID,
-        exp: OptDatetime = None,
-        *,
-        operation_id: UUID,
-        connection_context: ConnectionContext,
-    ) -> Tuple[UserSchema, OrganizationSchema]: ...
-
-    @overload
-    async def _get_credentials(
-        self,
-        user_id: UUID,
-        organization_id: None = None,
-        exp: OptDatetime = None,
-        *,
-        operation_id: UUID,
-        connection_context: ConnectionContext,
-    ) -> Tuple[UserSchema, None]: ...
-    async def _get_credentials(
-        self,
-        user_id: UUID,
-        organization_id: OptUUID = None,
-        exp: OptDatetime = None,
-        *,
-        operation_id: UUID,
-        connection_context: ConnectionContext,
-    ) -> Tuple[UserSchema, OptOrganizationSchema]:
-        user = await self._identity_provider.get_user(
-            user_id,
-            exp,
-            operation_id=operation_id,
-            connection_context=connection_context,
-        )
-
-        if organization_id is None:
-            organization = None
-        else:
-            organization = await self._identity_provider.get_organization(
-                organization_id,
-                exp,
-                operation_id=operation_id,
-                connection_context=connection_context,
-            )
-
-        return user, organization
-
     def _build_authentication_component(
-        self, user: UserSchema, organization: OptOrganizationSchema
+        self, principal: PrincipalSchema
     ) -> Tuple[RequestCredentials, RequestUser]:
-        req_user = RequestUser(
-            authenticated=True,
-            organization=None if organization is None else organization.key,
-            username=user.username,
-            email=user.email,
-        )
-        if organization is None:
-            domain = Domain.SYSTEM
-            domain_roles = user.get_active_system_roles()
-            scopes = ["authenticated", domain] + [
-                f"{domain}:{role}" for role in domain_roles
-            ]
-            if not len(domain_roles) >= 1:
+        # Define Request Credentials
+        scopes = ["authenticated", principal.domain]
+        medical_roles = principal.active_medical_roles
+        if medical_roles is not None:
+            scopes += [f"medical:{role}" for role in medical_roles]
+        if principal.domain is Domain.PERSONAL:
+            # Define organization info
+            organization_id = None
+            organization_uuid = None
+            organization_type = None
+
+            # Define domain roles
+            domain_roles = None
+
+        elif principal.domain is Domain.SYSTEM:
+            # Define organization info
+            organization_id = None
+            organization_uuid = None
+            organization_type = None
+
+            # Define domain roles
+            domain_roles = principal.active_system_roles
+            if domain_roles is None:
                 raise ValueError("Can not find active system roles")
-            req_credentials = RequestCredentials(
-                domain=domain,
-                user_id=user.id,
-                user_uuid=user.uuid,
-                user_type=user.type,
-                domain_roles=domain_roles,
-                scopes=scopes,
-            )
-        else:
-            domain = Domain.TENANT
-            domain_roles = user.get_active_organization_roles(organization.id)
-            medical_roles = user.get_active_medical_roles(organization.id)
-            scopes = (
-                ["authenticated", domain]
-                + [f"{domain}:{role}" for role in domain_roles]
-                + [f"medical:{role}" for role in medical_roles]
-            )
-            if not len(domain_roles) >= 1:
+
+            # Update scopes
+            scopes += [f"{principal.domain}:{role}" for role in domain_roles]
+
+        elif principal.domain is Domain.TENANT:
+            # Define organization info
+            if principal.organization is None:
+                raise ValueError("Can not find organization")
+            organization_id = principal.organization.id
+            organization_uuid = principal.organization.uuid
+            organization_type = principal.organization.type
+
+            # Define domain roles
+            domain_roles = principal.active_organization_roles
+            if domain_roles is None:
                 raise ValueError("Can not find active organization roles")
-            req_credentials = RequestCredentials(
-                domain=domain,
-                user_id=user.id,
-                user_uuid=user.uuid,
-                user_type=user.type,
-                organization_id=organization.id,
-                organization_uuid=organization.uuid,
-                organization_type=organization.type,
-                domain_roles=domain_roles,
-                medical_roles=medical_roles,
-                scopes=scopes,
-            )
-        return req_credentials, req_user
+
+            # Update scopes
+            scopes += [f"{principal.domain}:{role}" for role in domain_roles]
+
+        else:
+            raise ValueError("Unable to determine request credentials")
+
+        req_credentials = RequestCredentials(
+            principal_id=principal.id,
+            principal_uuid=principal.uuid,
+            domain=principal.domain,
+            user_id=principal.user.id,
+            user_uuid=principal.user.uuid,
+            user_type=principal.user.type,
+            organization_id=organization_id,
+            organization_uuid=organization_uuid,
+            organization_type=organization_type,
+            domain_roles=domain_roles,
+            medical_roles=principal.active_medical_roles,
+            scopes=scopes,
+        )
+
+        # Define Request User
+        request_user = RequestUser(
+            authenticated=True,
+            organization=(
+                None if principal.organization is None else principal.organization.key
+            ),
+            username=principal.user.username,
+            email=principal.user.email,
+        )
+
+        return req_credentials, request_user
 
     async def _authenticate_api_key(
         self,
@@ -168,37 +145,13 @@ class Backend(AuthenticationBackend):
             self._application_context.name,
             self._application_context.environment,
         )
-        user_organization_id = (
-            await self._identity_provider.get_user_organization_id_from_api_key(
-                api_key=authorization.credentials,
-                operation_id=operation_id,
-                connection_context=connection_context,
-            )
-        )
-
-        user = await self._identity_provider.get_user(
-            user_organization_id.user_id,
+        principal = await self._identity_provider.get_principal(
+            authorization.credentials,
             operation_id=operation_id,
             connection_context=connection_context,
         )
 
-        organization = None
-        organization_id = user_organization_id.organization_id
-        if organization_id is not None:
-            organization = await self._identity_provider.get_organization(
-                organization_id,
-                operation_id=operation_id,
-                connection_context=connection_context,
-            )
-
-        user, organization = await self._get_credentials(
-            user_organization_id.user_id,
-            user_organization_id.organization_id,
-            operation_id=operation_id,
-            connection_context=connection_context,
-        )
-
-        return self._build_authentication_component(user, organization)
+        return self._build_authentication_component(principal)
 
     async def _authenticate_bearer_token(
         self,
@@ -208,16 +161,13 @@ class Backend(AuthenticationBackend):
         connection_context: ConnectionContext,
     ) -> Tuple[RequestCredentials, RequestUser]:
         token = authorization.parse_token(key=self._public_key)
-
-        user, organization = await self._get_credentials(
+        principal = await self._identity_provider.get_principal(
             token.sub,
-            token.o,
-            datetime.fromtimestamp(token.exp, tz=timezone.utc),
             operation_id=operation_id,
             connection_context=connection_context,
         )
 
-        return self._build_authentication_component(user, organization)
+        return self._build_authentication_component(principal)
 
     async def _authenticate(
         self,
@@ -251,29 +201,38 @@ class Backend(AuthenticationBackend):
     ):
         if not is_authenticated(authentication):
             raise AuthenticationError(
-                "Can not perform impersonation if user is unauthenticated"
+                "Can not perform impersonation without authentication"
+            )
+
+        if is_personal(authentication):
+            raise AuthenticationError(
+                "Can not perform impersonation with personal authentication"
             )
 
         imp_user_id = impersonation.user_id
         imp_organization_id = impersonation.organization_id
 
         if imp_organization_id is None:
-            raise AuthenticationError("Cannot perform system-level impersonation.")
+            if not is_system(authentication):
+                raise AuthenticationError(
+                    "Can not perform personal impersonation without system authentication"
+                )
+            return
 
-        impersonated_user, impersonated_organization = await self._get_credentials(
-            imp_user_id,
-            imp_organization_id,
+        principal = await self._identity_provider.get_principal(
+            (imp_user_id, imp_organization_id),
             operation_id=operation_id,
             connection_context=connection_context,
         )
 
-        imp_int_organization_id = impersonated_organization.id
+        if principal.organization is None:
+            raise AuthenticationError("Principal is not registered to the organization")
 
         if is_tenant(authentication):
             if (
                 authentication.credentials.organization.uuid
-                != impersonated_organization.uuid
                 != imp_organization_id
+                != principal.organization.uuid
             ):
                 raise AuthenticationError(
                     "Can not impersonate user from other organization"
@@ -299,12 +258,12 @@ class Backend(AuthenticationBackend):
                     "Insufficient tenant-level role and/or scope to perform impersonation"
                 )
 
-            if (
-                OrganizationRole.OWNER
-                in impersonated_user.get_active_organization_roles(
-                    imp_int_organization_id
+            if principal.active_organization_roles is None:
+                raise AuthenticationError(
+                    "Principal did not have active organization roles"
                 )
-            ):
+
+            if OrganizationRole.OWNER in principal.active_organization_roles:
                 raise AuthenticationError("Can not impersonate organization's owner")
 
     async def authenticate(

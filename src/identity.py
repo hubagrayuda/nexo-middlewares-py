@@ -1,7 +1,7 @@
-from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from starlette.authentication import AuthenticationError
+from typing import TypeGuard
 from uuid import UUID
 from nexo.crypto.hash.enums import Mode
 from nexo.crypto.hash.sha256 import hash
@@ -11,19 +11,24 @@ from nexo.database.utils import build_cache_key
 from nexo.enums.expiration import Expiration
 from nexo.enums.status import DataStatus
 from nexo.schemas.connection import ConnectionContext
-from nexo.types.datetime import OptDatetime
+from nexo.types.uuid import DoubleUUIDs
 from .models import (
     Base,
     User as UserModel,
     Organization as OrganizationModel,
-    UserOrganization as UserOrganizationModel,
+    Principal as PrincipalModel,
     APIKey as APIKeyModel,
 )
-from .schemas import (
-    UserSchema,
-    OrganizationSchema,
-    UserOrganizationIdSchema,
-)
+from .schemas import PrincipalSchema
+
+
+def is_double_uuid(value: object) -> TypeGuard[DoubleUUIDs]:
+    return (
+        isinstance(value, tuple)
+        and len(value) == 2
+        and isinstance(value[0], UUID)
+        and isinstance(value[1], UUID)
+    )
 
 
 class IdentityProvider:
@@ -41,163 +46,94 @@ class IdentityProvider:
             layer=CacheLayer.MIDDLEWARE,
         )
 
-    async def get_user(
+    async def get_principal(
         self,
-        user_id: UUID,
-        exp: OptDatetime = None,
+        identifier: str | DoubleUUIDs | UUID,
         *,
         operation_id: UUID,
         connection_context: ConnectionContext,
-    ) -> UserSchema:
-        cache_key = build_cache_key("user", str(user_id), namespace=self._namespace)
-        redis = self._cache.manager.client.get(Connection.ASYNC)
-        redis_data = await redis.get(cache_key)
-        if redis_data is not None:
-            return UserSchema.model_validate_json(redis_data)
+    ) -> PrincipalSchema:
 
-        async with self._database.manager.session.get(
-            Connection.ASYNC,
-            operation_id=operation_id,
-            connection_context=connection_context,
-        ) as session:
-            stmt = (
-                select(UserModel)
-                .options(
-                    selectinload(UserModel.medical_roles),
-                    selectinload(UserModel.organization_roles),
-                    selectinload(UserModel.organizations).selectinload(
-                        UserOrganizationModel.organization
-                    ),
-                    selectinload(UserModel.system_roles),
-                )
-                .where(
-                    UserModel.uuid == user_id,
-                    UserModel.status == DataStatus.ACTIVE,
-                )
-            )
-
-            # Execute and fetch results
-            result = await session.execute(stmt)
-            row = result.scalars().one_or_none()
-
-            if row is None:
-                raise AuthenticationError(
-                    f"Can not find active User with ID: {user_id}"
-                )
-
-            data = UserSchema.model_validate(row, from_attributes=True)
-
-        if exp is None:
-            ex = Expiration.EXP_1WK.value
+        # Determine lookup mode
+        if isinstance(identifier, str):
+            hashed_api_key = hash(Mode.DIGEST, message=identifier)
+            cache_token = hashed_api_key
+        elif isinstance(identifier, UUID):
+            cache_token = str(identifier)
+        elif is_double_uuid(identifier):
+            user_uuid, organization_uuid = identifier
+            cache_token = f"{user_uuid}:{organization_uuid}"
         else:
-            now = datetime.now(tz=timezone.utc)
-            if exp <= now:
-                raise AuthenticationError("Cache expiry is less then now")
-            ex = min(int((exp - now).total_seconds()), Expiration.EXP_1WK.value)
-        await redis.set(cache_key, data.model_dump_json(), ex)
+            raise TypeError("Invalid identifier type")
 
-        return data
-
-    async def get_organization(
-        self,
-        organization_id: UUID,
-        exp: OptDatetime = None,
-        *,
-        operation_id: UUID,
-        connection_context: ConnectionContext,
-    ) -> OrganizationSchema:
+        # Cache
         cache_key = build_cache_key(
-            "organization", str(organization_id), namespace=self._namespace
-        )
-        redis = self._cache.manager.client.get(Connection.ASYNC)
-        redis_data = await redis.get(cache_key)
-        if redis_data is not None:
-            return OrganizationSchema.model_validate_json(redis_data)
-
-        async with self._database.manager.session.get(
-            Connection.ASYNC,
-            operation_id=operation_id,
-            connection_context=connection_context,
-        ) as session:
-            stmt = select(OrganizationModel).where(
-                OrganizationModel.uuid == organization_id,
-                OrganizationModel.status == DataStatus.ACTIVE,
-            )
-
-            # Execute and fetch results
-            result = await session.execute(stmt)
-            row = result.scalars().one_or_none()
-
-            if row is None:
-                raise AuthenticationError(
-                    f"Can not find active Organization with ID: {organization_id}"
-                )
-
-            data = OrganizationSchema.model_validate(row, from_attributes=True)
-
-        if exp is None:
-            ex = Expiration.EXP_1WK.value
-        else:
-            now = datetime.now(tz=timezone.utc)
-            if exp <= now:
-                raise AuthenticationError("Cache expiry is less then now")
-            ex = min(int((exp - now).total_seconds()), Expiration.EXP_1WK.value)
-        await redis.set(cache_key, data.model_dump_json(), ex)
-
-        return data
-
-    async def get_user_organization_id_from_api_key(
-        self,
-        api_key: str,
-        *,
-        operation_id: UUID,
-        connection_context: ConnectionContext,
-    ) -> UserOrganizationIdSchema:
-        hashed_api_key = hash(Mode.DIGEST, message=api_key)
-
-        cache_key = build_cache_key(
-            "user_organization_id",
-            hashed_api_key,
+            "principal",
+            cache_token,
             namespace=self._namespace,
         )
         redis = self._cache.manager.client.get(Connection.ASYNC)
         redis_data = await redis.get(cache_key)
         if redis_data is not None:
-            return UserOrganizationIdSchema.model_validate_json(redis_data)
+            return PrincipalSchema.model_validate_json(redis_data)
 
         async with self._database.manager.session.get(
             Connection.ASYNC,
             operation_id=operation_id,
             connection_context=connection_context,
         ) as session:
+
             stmt = (
-                select(APIKeyModel)
+                select(PrincipalModel)
                 .options(
-                    selectinload(APIKeyModel.user),
-                    selectinload(APIKeyModel.organization),
+                    selectinload(PrincipalModel.user),
+                    selectinload(PrincipalModel.organization),
+                    selectinload(PrincipalModel.medical_roles),
+                    selectinload(PrincipalModel.organization_roles),
+                    selectinload(PrincipalModel.system_roles),
                 )
+                .join(PrincipalModel.user)
+                .join(PrincipalModel.organization)
                 .where(
-                    APIKeyModel.status == DataStatus.ACTIVE,
-                    APIKeyModel.api_key == hashed_api_key,
+                    PrincipalModel.status == DataStatus.ACTIVE,
+                    UserModel.status == DataStatus.ACTIVE,
+                    OrganizationModel.status == DataStatus.ACTIVE,
                 )
             )
 
-            # Execute and fetch results
+            if isinstance(identifier, str):
+                stmt = stmt.join(PrincipalModel.api_key).where(
+                    APIKeyModel.status == DataStatus.ACTIVE,
+                    APIKeyModel.api_key == cache_token,
+                )
+            elif isinstance(identifier, UUID):
+                stmt = stmt.where(PrincipalModel.uuid == identifier)
+            elif is_double_uuid(identifier):
+                user_uuid, organization_uuid = identifier
+                stmt = (
+                    stmt.join(PrincipalModel.user)
+                    .join(PrincipalModel.organization)
+                    .where(
+                        UserModel.uuid == user_uuid,
+                        OrganizationModel.uuid == organization_uuid,
+                    )
+                )
+            else:
+                raise TypeError("Invalid identifier type")
+
             result = await session.execute(stmt)
             row = result.scalars().one_or_none()
 
             if row is None:
                 raise AuthenticationError(
-                    "Can not find valid User-Organization combination for given API Key"
+                    "Can not find valid Principal for given identifier"
                 )
 
-            data = UserOrganizationIdSchema(
-                user_id=row.user.uuid,
-                organization_id=(
-                    row.organization.uuid if row.organization is not None else None
-                ),
+            principal = PrincipalSchema.model_validate(row, from_attributes=True)
+            await redis.set(
+                cache_key,
+                principal.model_dump_json(),
+                Expiration.EXP_1MO.value,
             )
 
-        await redis.set(cache_key, data.model_dump_json(), Expiration.EXP_1MO.value)
-
-        return data
+            return principal

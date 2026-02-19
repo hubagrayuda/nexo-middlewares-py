@@ -1,15 +1,14 @@
-from sqlalchemy import ForeignKey, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import Enum, Integer, String
-from nexo.enums.medical import MedicalRole, ListOfMedicalRoles
+from nexo.enums.medical import MedicalRole
 from nexo.enums.organization import (
     OrganizationRole,
-    ListOfOrganizationRoles,
     OrganizationType,
 )
-from nexo.enums.status import OptListOfDataStatuses, FULL_DATA_STATUSES
-from nexo.enums.system import SystemRole, ListOfSystemRoles
+from nexo.enums.system import SystemRole
 from nexo.enums.user import UserType
+from nexo.schemas.security.enums import Domain
 from nexo.schemas.model import DataIdentifier, DataStatus
 from nexo.types.integer import OptInt
 
@@ -35,60 +34,11 @@ class User(
     )
 
     # relationships
-    api_keys: Mapped[list["APIKey"]] = relationship(
-        "APIKey",
+    principals: Mapped[list["Principal"]] = relationship(
+        "Principal",
         back_populates="user",
         cascade="all, delete-orphan",
     )
-    medical_roles: Mapped[list["UserMedicalRole"]] = relationship(
-        "UserMedicalRole",
-        back_populates="user",
-        cascade="all, delete-orphan",
-    )
-    organization_roles: Mapped[list["UserOrganizationRole"]] = relationship(
-        "UserOrganizationRole",
-        back_populates="user",
-        cascade="all, delete-orphan",
-    )
-    organizations: Mapped[list["UserOrganization"]] = relationship(
-        "UserOrganization",
-        back_populates="user",
-        cascade="all, delete-orphan",
-    )
-    system_roles: Mapped[list["UserSystemRole"]] = relationship(
-        "UserSystemRole",
-        back_populates="user",
-        cascade="all, delete-orphan",
-    )
-
-    def get_organization_roles(
-        self, organization_id: int, statuses: OptListOfDataStatuses = None
-    ) -> ListOfOrganizationRoles:
-        if not statuses:
-            statuses = FULL_DATA_STATUSES
-        return [
-            uor.organization_role
-            for uor in self.organization_roles
-            if uor.status in statuses and uor.organization_id == organization_id
-        ]
-
-    def get_medical_roles(
-        self, organization_id: int, statuses: OptListOfDataStatuses = None
-    ) -> ListOfMedicalRoles:
-        if not statuses:
-            statuses = FULL_DATA_STATUSES
-        return [
-            umr.medical_role
-            for umr in self.medical_roles
-            if umr.status in statuses and umr.organization_id == organization_id
-        ]
-
-    def get_system_roles(
-        self, statuses: OptListOfDataStatuses = None
-    ) -> ListOfSystemRoles:
-        if not statuses:
-            statuses = FULL_DATA_STATUSES
-        return [usr.system_role for usr in self.system_roles if usr.status in statuses]
 
 
 class Organization(
@@ -105,62 +55,22 @@ class Organization(
     key: Mapped[str] = mapped_column("key", String(255), unique=True, nullable=False)
 
     # relationships
-    api_keys: Mapped[list["APIKey"]] = relationship(
-        "APIKey",
-        back_populates="organization",
-        cascade="all, delete-orphan",
-    )
-    medical_roles: Mapped[list["UserMedicalRole"]] = relationship(
-        "UserMedicalRole",
-        back_populates="organization",
-        cascade="all, delete-orphan",
-    )
-    user_roles: Mapped[list["UserOrganizationRole"]] = relationship(
-        "UserOrganizationRole",
-        back_populates="organization",
-        cascade="all, delete-orphan",
-    )
-    users: Mapped[list["UserOrganization"]] = relationship(
-        "UserOrganization",
+    principals: Mapped[list["Principal"]] = relationship(
+        "Principal",
         back_populates="organization",
         cascade="all, delete-orphan",
     )
 
 
-class UserOrganization(
+class Principal(
     DataStatus,
     DataIdentifier,
     Base,
 ):
-    __tablename__ = "user_organizations"
-    user_id: Mapped[int] = mapped_column(
-        "user_id",
-        Integer,
-        ForeignKey("users.id", ondelete="CASCADE", onupdate="CASCADE"),
-        nullable=False,
+    __tablename__ = "principals"
+    domain: Mapped[Domain] = mapped_column(
+        "domain", Enum(Domain, name="domain"), nullable=False
     )
-    organization_id: Mapped[int] = mapped_column(
-        "organization_id",
-        Integer,
-        ForeignKey("organizations.id", ondelete="CASCADE", onupdate="CASCADE"),
-        nullable=False,
-    )
-
-    # relationships
-    user: Mapped["User"] = relationship("User", back_populates="organizations")
-    organization: Mapped["Organization"] = relationship(
-        "Organization", back_populates="users"
-    )
-
-    __table_args__ = (UniqueConstraint("user_id", "organization_id"),)
-
-
-class APIKey(
-    DataStatus,
-    DataIdentifier,
-    Base,
-):
-    __tablename__ = "api_keys"
     user_id: Mapped[int] = mapped_column(
         "user_id",
         Integer,
@@ -172,35 +82,89 @@ class APIKey(
         Integer,
         ForeignKey("organizations.id", ondelete="CASCADE", onupdate="CASCADE"),
     )
+
+    # relationships
+    user: Mapped["User"] = relationship("User", back_populates="principals")
+    organization: Mapped["Organization"] = relationship(
+        "Organization", back_populates="principals"
+    )
+    api_key: Mapped["APIKey | None"] = relationship(
+        "APIKey", back_populates="principal"
+    )
+    medical_roles: Mapped[list["PrincipalMedicalRole"]] = relationship(
+        "PrincipalMedicalRole",
+        back_populates="principal",
+        cascade="all, delete-orphan",
+    )
+    organization_roles: Mapped[list["PrincipalOrganizationRole"]] = relationship(
+        "PrincipalOrganizationRole",
+        back_populates="principal",
+        cascade="all, delete-orphan",
+    )
+    system_roles: Mapped[list["PrincipalSystemRole"]] = relationship(
+        "PrincipalSystemRole",
+        back_populates="principal",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        UniqueConstraint("domain", "user_id", "organization_id"),
+        # CHECK
+        CheckConstraint(
+            "(domain IN ('PERSONAL', 'SYSTEM') AND organization_id IS NULL) "
+            "OR (domain = 'TENANT' AND organization_id IS NOT NULL)",
+            name="principals_check",
+        ),
+        # PERSONAL + SYSTEM
+        Index(
+            "uniq_principals_personal_system",
+            "domain",
+            "user_id",
+            unique=True,
+            postgresql_where=(domain.in_(["PERSONAL", "SYSTEM"])),
+        ),
+        # TENANT
+        Index(
+            "uniq_principals_tenant",
+            "domain",
+            "user_id",
+            "organization_id",
+            unique=True,
+            postgresql_where=(domain == "TENANT"),
+        ),
+    )
+
+
+class APIKey(
+    DataStatus,
+    DataIdentifier,
+    Base,
+):
+    __tablename__ = "api_keys_v2"
+    principal_id: Mapped[int] = mapped_column(
+        "principal_id",
+        Integer,
+        ForeignKey("principals.id", ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=False,
+    )
     api_key: Mapped[str] = mapped_column(
         "api_key", String(255), unique=True, nullable=False
     )
 
     # relationships
-    user: Mapped["User"] = relationship("User", back_populates="api_keys")
-    organization: Mapped["Organization | None"] = relationship(
-        "Organization", back_populates="api_keys"
-    )
-
-    __table_args__ = (UniqueConstraint("user_id", "organization_id", "api_key"),)
+    principal: Mapped["Principal"] = relationship("Principal", back_populates="api_key")
 
 
-class UserMedicalRole(
+class PrincipalMedicalRole(
     DataStatus,
     DataIdentifier,
     Base,
 ):
-    __tablename__ = "user_medical_roles"
-    user_id: Mapped[int] = mapped_column(
-        "user_id",
+    __tablename__ = "principal_medical_roles"
+    principal_id: Mapped[int] = mapped_column(
+        "principal_id",
         Integer,
-        ForeignKey("users.id", ondelete="CASCADE", onupdate="CASCADE"),
-        nullable=False,
-    )
-    organization_id: Mapped[int] = mapped_column(
-        "organization_id",
-        Integer,
-        ForeignKey("organizations.id", ondelete="CASCADE", onupdate="CASCADE"),
+        ForeignKey("principals.id", ondelete="CASCADE", onupdate="CASCADE"),
         nullable=False,
     )
     medical_role: Mapped[MedicalRole] = mapped_column(
@@ -210,30 +174,23 @@ class UserMedicalRole(
     )
 
     # relationships
-    user: Mapped["User"] = relationship("User", back_populates="medical_roles")
-    organization: Mapped["Organization"] = relationship(
-        "Organization", back_populates="medical_roles"
+    principal: Mapped["Principal"] = relationship(
+        "Principal", back_populates="medical_roles"
     )
 
-    __table_args__ = (UniqueConstraint("user_id", "organization_id", "medical_role"),)
+    __table_args__ = (UniqueConstraint("principal_id", "medical_role"),)
 
 
-class UserOrganizationRole(
+class PrincipalOrganizationRole(
     DataStatus,
     DataIdentifier,
     Base,
 ):
-    __tablename__ = "user_organization_roles_v2"
-    user_id: Mapped[int] = mapped_column(
-        "user_id",
+    __tablename__ = "principal_organization_roles"
+    principal_id: Mapped[int] = mapped_column(
+        "principal_id",
         Integer,
-        ForeignKey("users.id", ondelete="CASCADE", onupdate="CASCADE"),
-        nullable=False,
-    )
-    organization_id: Mapped[int] = mapped_column(
-        "organization_id",
-        Integer,
-        ForeignKey("organizations.id", ondelete="CASCADE", onupdate="CASCADE"),
+        ForeignKey("principals.id", ondelete="CASCADE", onupdate="CASCADE"),
         nullable=False,
     )
     organization_role: Mapped[OrganizationRole] = mapped_column(
@@ -243,33 +200,34 @@ class UserOrganizationRole(
     )
 
     # relationships
-    user: Mapped["User"] = relationship("User", back_populates="organization_roles")
-    organization: Mapped["Organization"] = relationship(
-        "Organization", back_populates="user_roles"
+    principal: Mapped["Principal"] = relationship(
+        "Principal", back_populates="organization_roles"
     )
 
-    __table_args__ = (
-        UniqueConstraint("user_id", "organization_id", "organization_role"),
-    )
+    __table_args__ = (UniqueConstraint("principal_id", "organization_role"),)
 
 
-class UserSystemRole(
+class PrincipalSystemRole(
     DataStatus,
     DataIdentifier,
     Base,
 ):
-    __tablename__ = "user_system_roles"
-    user_id: Mapped[int] = mapped_column(
-        "user_id",
+    __tablename__ = "principal_system_roles"
+    principal_id: Mapped[int] = mapped_column(
+        "principal_id",
         Integer,
-        ForeignKey("users.id", ondelete="CASCADE", onupdate="CASCADE"),
+        ForeignKey("principals.id", ondelete="CASCADE", onupdate="CASCADE"),
         nullable=False,
     )
     system_role: Mapped[SystemRole] = mapped_column(
-        "system_role", Enum(SystemRole, name="system_role"), nullable=False
+        "system_role",
+        Enum(SystemRole, name="system_role"),
+        nullable=False,
     )
 
     # relationships
-    user: Mapped["User"] = relationship("User", back_populates="system_roles")
+    principal: Mapped["Principal"] = relationship(
+        "Principal", back_populates="system_roles"
+    )
 
-    __table_args__ = (UniqueConstraint("user_id", "system_role"),)
+    __table_args__ = (UniqueConstraint("principal_id", "system_role"),)
