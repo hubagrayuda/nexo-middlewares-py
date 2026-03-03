@@ -92,13 +92,7 @@ class IdentityProvider:
                     selectinload(PrincipalModel.organization_roles),
                     selectinload(PrincipalModel.system_roles),
                 )
-                .join(PrincipalModel.user)
-                .join(PrincipalModel.organization)
-                .where(
-                    PrincipalModel.status == DataStatus.ACTIVE,
-                    UserModel.status == DataStatus.ACTIVE,
-                    OrganizationModel.status == DataStatus.ACTIVE,
-                )
+                .where(PrincipalModel.status == DataStatus.ACTIVE)
             )
 
             if isinstance(identifier, str):
