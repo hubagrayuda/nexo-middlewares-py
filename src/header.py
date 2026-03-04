@@ -23,14 +23,14 @@ def add_header(*, private_key: RsaKey):
             connection_context.executed_at.isoformat()
         )
 
-        completed_at = request.state.completed_at
+        completed_at = getattr(request.state, "completed_at", None)
         if not isinstance(completed_at, datetime):
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Completed At timestamp is not a datetime {completed_at}",
             )
 
-        duration = request.state.duration
+        duration = getattr(request.state, "duration", None)
         if not isinstance(duration, float):
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
