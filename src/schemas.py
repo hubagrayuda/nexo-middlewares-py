@@ -1,55 +1,60 @@
 from pydantic import Field, field_validator
 from typing import Annotated
-from nexo.enums.medical import (
-    MedicalRole as MedicalRoleEnum,
-    FullMedicalRoleMixin,
-    ListOfMedicalRoles,
-)
-from nexo.enums.organization import (
-    OrganizationRole as OrganizationRoleEnum,
-    FullOrganizationRoleMixin,
-    ListOfOrganizationRoles,
-    OrganizationType,
-)
 from nexo.enums.status import DataStatus as DataStatusEnum
-from nexo.enums.system import (
-    SystemRole as SystemRoleEnum,
-    FullSystemRoleMixin,
-    ListOfSystemRoles,
-)
-from nexo.enums.user import UserType
-from nexo.schemas.mixins.identity import RecordIdentifier, TypedRecord
+from nexo.schemas.mixins.identity import RecordIdentifier
 from nexo.schemas.security.enums import DomainMixin, Domain
+from nexo.types.string import ListOfStrs
 
 
-class UserSchema(TypedRecord[UserType]):
+class OrganizationTypeSchema(RecordIdentifier):
+    key: str = Field(..., max_length=40, description="Organization type's key")
+
+
+class OrganizationSchema(RecordIdentifier):
+    organization_type: Annotated[
+        OrganizationTypeSchema, Field(..., description="Organization's type")
+    ]
+    key: Annotated[str, Field(..., description="Organization's key", max_length=255)]
+
+
+class UserTypeSchema(RecordIdentifier):
+    key: str = Field(..., max_length=20, description="User type's key")
+
+
+class UserSchema(RecordIdentifier):
+    user_type: Annotated[UserTypeSchema, Field(..., description="User's type")]
     username: Annotated[str, Field(..., description="User's username", max_length=50)]
     email: Annotated[str, Field(..., description="User's email", max_length=255)]
 
 
-class OrganizationSchema(TypedRecord[OrganizationType]):
-    key: Annotated[str, Field(..., description="Organization's key", max_length=255)]
+class MedicalRoleSchema(RecordIdentifier):
+    key: str = Field(..., max_length=255, description="Medical role's key")
 
 
-class MedicalRoleSchema(
-    FullMedicalRoleMixin[MedicalRoleEnum],
-    RecordIdentifier,
-):
-    pass
+class PrincipalMedicalRoleSchema(RecordIdentifier):
+    medical_role: Annotated[
+        MedicalRoleSchema, Field(..., description="Principal's Medical Role")
+    ]
 
 
-class OrganizationRoleSchema(
-    FullOrganizationRoleMixin[OrganizationRoleEnum],
-    RecordIdentifier,
-):
-    pass
+class OrganizationRoleSchema(RecordIdentifier):
+    key: str = Field(..., max_length=20, description="Organization role's key")
 
 
-class SystemRoleSchema(
-    FullSystemRoleMixin[SystemRoleEnum],
-    RecordIdentifier,
-):
-    pass
+class PrincipalOrganizationRoleSchema(RecordIdentifier):
+    organization_role: Annotated[
+        OrganizationRoleSchema, Field(..., description="Principal's Organization Role")
+    ]
+
+
+class SystemRoleSchema(RecordIdentifier):
+    key: str = Field(..., max_length=20, description="System role's key")
+
+
+class PrincipalSystemRoleSchema(RecordIdentifier):
+    system_role: Annotated[
+        SystemRoleSchema, Field(..., description="Principal's System Role")
+    ]
 
 
 class PrincipalSchema(
@@ -74,46 +79,55 @@ class PrincipalSchema(
         return v
 
     medical_roles: Annotated[
-        list[MedicalRoleSchema] | None,
+        list[PrincipalMedicalRoleSchema],
         Field(..., description="Principal's medical roles"),
     ]
 
     @property
-    def active_medical_roles(self) -> ListOfMedicalRoles | None:
+    def active_medical_roles(self) -> ListOfStrs | None:
         if self.medical_roles is None:
             return None
         return [
-            mr.medical_role
-            for mr in self.medical_roles
-            if mr.status is DataStatusEnum.ACTIVE
+            pmr.medical_role.key
+            for pmr in self.medical_roles
+            if (
+                pmr.status is DataStatusEnum.ACTIVE
+                and pmr.medical_role.status is DataStatusEnum.ACTIVE
+            )
         ]
 
     organization_roles: Annotated[
-        list[OrganizationRoleSchema] | None,
+        list[PrincipalOrganizationRoleSchema],
         Field(..., description="Principal's organization roles"),
     ]
 
     @property
-    def active_organization_roles(self) -> ListOfOrganizationRoles | None:
+    def active_organization_roles(self) -> ListOfStrs | None:
         if not self.organization_roles:
             return None
         return [
-            por.organization_role
+            por.organization_role.key
             for por in self.organization_roles
-            if por.status is DataStatusEnum.ACTIVE
+            if (
+                por.status is DataStatusEnum.ACTIVE
+                and por.organization_role.status is DataStatusEnum.ACTIVE
+            )
         ]
 
     system_roles: Annotated[
-        list[SystemRoleSchema] | None,
+        list[PrincipalSystemRoleSchema],
         Field(..., description="Principal's system roles"),
     ]
 
     @property
-    def active_system_roles(self) -> ListOfSystemRoles | None:
+    def active_system_roles(self) -> ListOfStrs | None:
         if not self.system_roles:
             return None
         return [
-            sr.system_role
-            for sr in self.system_roles
-            if sr.status is DataStatusEnum.ACTIVE
+            psr.system_role.key
+            for psr in self.system_roles
+            if (
+                psr.status is DataStatusEnum.ACTIVE
+                and psr.system_role.status is DataStatusEnum.ACTIVE
+            )
         ]

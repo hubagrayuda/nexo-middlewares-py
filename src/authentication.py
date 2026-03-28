@@ -4,7 +4,10 @@ from starlette.authentication import AuthenticationBackend, AuthenticationError
 from typing import Tuple
 from uuid import UUID
 from nexo.database.handlers import PostgreSQLHandler, RedisHandler
-from nexo.enums.organization import OrganizationRole
+from nexo.enums.medical import MedicalRole
+from nexo.enums.organization import OrganizationRole, OrganizationType
+from nexo.enums.system import SystemRole
+from nexo.enums.user import UserType
 from nexo.schemas.application import ApplicationContext, OptApplicationContext
 from nexo.schemas.connection import ConnectionContext
 from nexo.schemas.security.api_key import validate as validate_api_key
@@ -17,7 +20,6 @@ from nexo.schemas.security.authentication import (
     is_authenticated,
     is_personal,
     is_tenant,
-    is_system,
 )
 from nexo.schemas.security.authorization import (
     BaseAuthorization,
@@ -80,9 +82,16 @@ class Backend(AuthenticationBackend):
             organization_type = None
 
             # Define domain roles
-            domain_roles = principal.active_system_roles
-            if domain_roles is None:
+            raw_domain_roles = principal.active_system_roles
+            if raw_domain_roles is None:
                 raise ValueError("Can not find active system roles")
+
+            domain_roles = []
+            for sr in raw_domain_roles:
+                try:
+                    domain_roles.append(SystemRole(sr))
+                except ValueError:
+                    pass
 
             # Update scopes
             scopes += [f"{principal.domain}:{role}" for role in domain_roles]
@@ -93,12 +102,21 @@ class Backend(AuthenticationBackend):
                 raise ValueError("Can not find organization")
             organization_id = principal.organization.id
             organization_uuid = principal.organization.uuid
-            organization_type = principal.organization.type
+            organization_type = OrganizationType(
+                principal.organization.organization_type.key
+            )
 
             # Define domain roles
-            domain_roles = principal.active_organization_roles
-            if domain_roles is None:
+            raw_domain_roles = principal.active_organization_roles
+            if raw_domain_roles is None:
                 raise ValueError("Can not find active organization roles")
+
+            domain_roles = []
+            for sr in raw_domain_roles:
+                try:
+                    domain_roles.append(OrganizationRole(sr))
+                except ValueError:
+                    pass
 
             # Update scopes
             scopes += [f"{principal.domain}:{role}" for role in domain_roles]
@@ -106,18 +124,29 @@ class Backend(AuthenticationBackend):
         else:
             raise ValueError("Unable to determine request credentials")
 
+        medical_roles = None
+        if principal.active_medical_roles:
+            medical_roles = []
+            for amr in principal.active_medical_roles:
+                try:
+                    medical_roles.append(MedicalRole(amr))
+                except ValueError:
+                    pass
+
+        user_type = UserType(principal.user.user_type.key)
+
         req_credentials = RequestCredentials(
             principal_id=principal.id,
             principal_uuid=principal.uuid,
             domain=principal.domain,
             user_id=principal.user.id,
             user_uuid=principal.user.uuid,
-            user_type=principal.user.type,
+            user_type=user_type,
             organization_id=organization_id,
             organization_uuid=organization_uuid,
             organization_type=organization_type,
             domain_roles=domain_roles,
-            medical_roles=principal.active_medical_roles,
+            medical_roles=medical_roles,
             scopes=scopes,
         )
 
@@ -209,29 +238,23 @@ class Backend(AuthenticationBackend):
                 "Can not perform impersonation with personal authentication"
             )
 
-        imp_user_id = impersonation.user_id
-        imp_organization_id = impersonation.organization_id
-
-        if imp_organization_id is None:
-            if not is_system(authentication):
-                raise AuthenticationError(
-                    "Can not perform personal impersonation without system authentication"
-                )
-            return
-
         principal = await self._identity_provider.get_principal(
-            (imp_user_id, imp_organization_id),
+            impersonation.principal_id,
             operation_id=operation_id,
             connection_context=connection_context,
         )
 
-        if principal.organization is None:
-            raise AuthenticationError("Principal is not registered to the organization")
+        if principal.domain is Domain.SYSTEM:
+            raise AuthenticationError("Can not impersonate system principal")
 
         if is_tenant(authentication):
+            if principal.domain is not Domain.TENANT or principal.organization is None:
+                raise AuthenticationError(
+                    "Principal is not registered to any organization"
+                )
+
             if (
                 authentication.credentials.organization.uuid
-                != imp_organization_id
                 != principal.organization.uuid
             ):
                 raise AuthenticationError(

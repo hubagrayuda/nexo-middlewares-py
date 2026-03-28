@@ -1,7 +1,6 @@
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from starlette.authentication import AuthenticationError
-from typing import TypeGuard
 from uuid import UUID
 from nexo.crypto.hash.enums import Mode
 from nexo.crypto.hash.sha256 import hash
@@ -11,24 +10,17 @@ from nexo.database.utils import build_cache_key
 from nexo.enums.expiration import Expiration
 from nexo.enums.status import DataStatus
 from nexo.schemas.connection import ConnectionContext
-from nexo.types.uuid import DoubleUUIDs
 from .models import (
     Base,
-    User as UserModel,
-    Organization as OrganizationModel,
-    Principal as PrincipalModel,
-    APIKey as APIKeyModel,
+    Organization,
+    User,
+    PrincipalMedicalRole,
+    PrincipalOrganizationRole,
+    PrincipalSystemRole,
+    Principal,
+    APIKey,
 )
 from .schemas import PrincipalSchema
-
-
-def is_double_uuid(value: object) -> TypeGuard[DoubleUUIDs]:
-    return (
-        isinstance(value, tuple)
-        and len(value) == 2
-        and isinstance(value[0], UUID)
-        and isinstance(value[1], UUID)
-    )
 
 
 class IdentityProvider:
@@ -48,7 +40,7 @@ class IdentityProvider:
 
     async def get_principal(
         self,
-        identifier: str | DoubleUUIDs | UUID,
+        identifier: str | UUID,
         *,
         operation_id: UUID,
         connection_context: ConnectionContext,
@@ -60,11 +52,6 @@ class IdentityProvider:
             cache_token = hashed_api_key
         elif isinstance(identifier, UUID):
             cache_token = str(identifier)
-        elif is_double_uuid(identifier):
-            user_uuid, organization_uuid = identifier
-            cache_token = f"{user_uuid}:{organization_uuid}"
-        else:
-            raise TypeError("Invalid identifier type")
 
         # Cache
         cache_key = build_cache_key(
@@ -84,36 +71,34 @@ class IdentityProvider:
         ) as session:
 
             stmt = (
-                select(PrincipalModel)
+                select(Principal)
                 .options(
-                    selectinload(PrincipalModel.user),
-                    selectinload(PrincipalModel.organization),
-                    selectinload(PrincipalModel.medical_roles),
-                    selectinload(PrincipalModel.organization_roles),
-                    selectinload(PrincipalModel.system_roles),
+                    selectinload(Principal.user).selectinload(User.user_type),
+                    selectinload(Principal.organization).selectinload(
+                        Organization.organization_type
+                    ),
+                    selectinload(Principal.medical_roles).selectinload(
+                        PrincipalMedicalRole.medical_role
+                    ),
+                    selectinload(Principal.organization_roles).selectinload(
+                        PrincipalOrganizationRole.organization_role
+                    ),
+                    selectinload(Principal.system_roles).selectinload(
+                        PrincipalSystemRole.system_role
+                    ),
                 )
-                .where(PrincipalModel.status == DataStatus.ACTIVE)
+                .where(Principal.status == DataStatus.ACTIVE)
             )
 
             if isinstance(identifier, str):
-                stmt = stmt.join(PrincipalModel.api_key).where(
-                    APIKeyModel.status == DataStatus.ACTIVE,
-                    APIKeyModel.api_key == cache_token,
-                )
-            elif isinstance(identifier, UUID):
-                stmt = stmt.where(PrincipalModel.uuid == identifier)
-            elif is_double_uuid(identifier):
-                user_uuid, organization_uuid = identifier
-                stmt = (
-                    stmt.join(PrincipalModel.user)
-                    .join(PrincipalModel.organization)
-                    .where(
-                        UserModel.uuid == user_uuid,
-                        OrganizationModel.uuid == organization_uuid,
+                stmt = stmt.where(
+                    Principal.api_key.has(
+                        (APIKey.status == DataStatus.ACTIVE)
+                        & (APIKey.api_key == cache_token)
                     )
                 )
-            else:
-                raise TypeError("Invalid identifier type")
+            elif isinstance(identifier, UUID):
+                stmt = stmt.where(Principal.uuid == identifier)
 
             result = await session.execute(stmt)
             row = result.scalars().one_or_none()
