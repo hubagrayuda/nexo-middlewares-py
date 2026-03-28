@@ -79,7 +79,7 @@ class PrincipalSchema(
         return v
 
     medical_roles: Annotated[
-        list[PrincipalMedicalRoleSchema],
+        list[PrincipalMedicalRoleSchema] | None,
         Field(..., description="Principal's medical roles"),
     ]
 
@@ -97,7 +97,7 @@ class PrincipalSchema(
         ]
 
     organization_roles: Annotated[
-        list[PrincipalOrganizationRoleSchema],
+        list[PrincipalOrganizationRoleSchema] | None,
         Field(..., description="Principal's organization roles"),
     ]
 
@@ -115,7 +115,7 @@ class PrincipalSchema(
         ]
 
     system_roles: Annotated[
-        list[PrincipalSystemRoleSchema],
+        list[PrincipalSystemRoleSchema] | None,
         Field(..., description="Principal's system roles"),
     ]
 
