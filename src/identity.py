@@ -63,7 +63,7 @@ class IdentityProvider:
             )
 
             result = await session.execute(stmt)
-            row = result.one_or_none()
+            row = result.scalars().one_or_none()
 
             if row is None:
                 raise ValueError(f"Client with ID of '{id}' is not found")

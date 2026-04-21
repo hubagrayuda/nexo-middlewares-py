@@ -41,23 +41,36 @@ class CoreMiddleware:
 
     async def _compute_request_body_hash(self, request: Request) -> str:
         """Safely reads the request body, hashes it, and re-injects it."""
-        content_type = request.headers.get(Header.CONTENT_TYPE, "")
+
+        # 1. Fast fail if there is obviously no body
+        content_length = request.headers.get("content-length")
+        if not content_length or int(content_length) == 0:
+            return "EMPTY-PAYLOAD"
+
+        # 2. Check Content-Type
+        content_type = request.headers.get(Header.CONTENT_TYPE.value, "")
 
         # Only hash JSON. Do NOT hash multipart/form-data (file uploads)
         if "application/json" not in content_type:
             return "UNHASHABLE-PAYLOAD"
 
-        body_bytes = await request.body()
+        # 3. Now it is safe to read the body
+        try:
+            body_bytes = await request.body()
+        except Exception:
+            # Catch unexpected disconnects gracefully
+            return "EMPTY-PAYLOAD"
 
-        # Re-inject the body so downstream endpoints can still read it!
+        if not body_bytes:
+            return "EMPTY-PAYLOAD"
+
+        # 4. Re-inject the body so downstream endpoints can still read it!
         async def receive():
             return {"type": "http.request", "body": body_bytes}
 
         request._receive = receive
 
-        if not body_bytes:
-            return "EMPTY-PAYLOAD"
-
+        # 5. Return the hash
         return hash(Mode.DIGEST, message=body_bytes).hex()
 
     async def _compute_response_body_hash(

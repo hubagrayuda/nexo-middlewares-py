@@ -78,7 +78,7 @@ class MiddlewareConfig(BaseModel):
             description="Authentication middleware's configurations",
         ),
     ]
-    client: Annotated[
+    core: Annotated[
         CoreConfig,
         Field(
             default_factory=CoreConfig,
