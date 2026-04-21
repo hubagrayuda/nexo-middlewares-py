@@ -1,6 +1,6 @@
 import json
 from datetime import datetime
-from fastapi import status, HTTPException, Request
+from fastapi import status, Request
 from fastapi.responses import JSONResponse
 from typing import Any
 from starlette.middleware.base import RequestResponseEndpoint
@@ -26,17 +26,18 @@ from nexo.schemas.pagination import OptAnyPagination
 from nexo.schemas.response import (
     ResponseContext,
     AnyDataResponse,
+    InternalServerErrorResponse,
     ErrorResponseFactory,
 )
 from nexo.schemas.security.authentication import BaseAuthentication
 from nexo.schemas.security.authorization import BaseAuthorization
 from nexo.schemas.security.impersonation import Impersonation
 from nexo.utils.extractor import ResponseBodyExtractor
-from .config import LoggerConfig
+from .config import MonitorConfig
 
 
 def monitor_request(
-    config: LoggerConfig,
+    config: MonitorConfig,
     logger: Middleware,
     monitor: RequestMonitor,
     publishers: ListOfPublisherHandlers = [],
@@ -58,11 +59,8 @@ def monitor_request(
     async def dispatch(request: Request, call_next: RequestResponseEndpoint):
         response = await call_next(request)
 
-        content_type = response.headers.get(Header.CONTENT_TYPE)
-
-        if content_type is None or (
-            content_type is not None and "application/json" not in content_type.lower()
-        ):
+        content_type = response.headers.get(Header.CONTENT_TYPE, "")
+        if "application/json" not in content_type:
             return response
 
         operation_id = extract_operation_id(conn=request)
@@ -70,25 +68,25 @@ def monitor_request(
             request=request, strict=False
         )
 
-        executed_at = getattr(request.state, "executed_at", None)
-        if not isinstance(executed_at, datetime):
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Executed At timestamp is not a datetime {executed_at}",
-            )
+        connection_context = ConnectionContext.from_connection(request)
+        executed_at = connection_context.executed_at
 
         completed_at = getattr(request.state, "completed_at", None)
-        if not isinstance(completed_at, datetime):
-            raise HTTPException(
+        if completed_at is None or not isinstance(completed_at, datetime):
+            return JSONResponse(
+                content=InternalServerErrorResponse(
+                    other=f"Invalid Completed At timestamp {completed_at}"
+                ).model_dump(),
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Completed At timestamp is not a datetime {completed_at}",
             )
 
         duration = getattr(request.state, "duration", None)
-        if not isinstance(duration, float):
-            raise HTTPException(
+        if duration is None or not isinstance(duration, float):
+            return JSONResponse(
+                content=InternalServerErrorResponse(
+                    other=f"Invalid Duration {duration}"
+                ).model_dump(),
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Duration is not a float {duration}",
             )
 
         # Add request record
@@ -100,8 +98,6 @@ def monitor_request(
         operation_timestamp = Timestamp(
             executed_at=executed_at, completed_at=completed_at, duration=duration
         )
-
-        connection_context = ConnectionContext.from_connection(request)
         authentication: BaseAuthentication = BaseAuthentication.extract(request)
         authorization = BaseAuthorization.extract(request, auto_error=False)
         impersonation = Impersonation.extract(request)
@@ -163,10 +159,11 @@ def monitor_request(
                 operation.log(logger, LogLevel.ERROR)
                 operation.publish(logger, publishers)
 
-                cleaned_response = validated_response
-                cleaned_response.other = None
+                if final_response.status_code == 500:
+                    validated_response.other = None
+
                 final_response = JSONResponse(
-                    content=cleaned_response,
+                    content=validated_response,
                     status_code=final_response.status_code,
                     headers=final_response.headers,
                     media_type=final_response.media_type,

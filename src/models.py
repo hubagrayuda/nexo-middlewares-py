@@ -1,13 +1,33 @@
 from sqlalchemy import CheckConstraint, ForeignKey, Index, UniqueConstraint, text
+from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import Enum, Integer, String
+from uuid import UUID, uuid4
 from nexo.schemas.security.enums import Domain
-from nexo.schemas.model import DataIdentifier, DataStatus
+from nexo.schemas.model import (
+    SimpleDataIdentifier,
+    DataIdentifier,
+    DataStatus,
+)
 from nexo.types.integer import OptInt
 
 
 class Base(DeclarativeBase):
     """Declarative Base"""
+
+
+class Client(DataStatus, SimpleDataIdentifier, Base):
+    __tablename__ = "clients"
+    secret: Mapped[UUID] = mapped_column(
+        name="secret",
+        type_=PostgreSQLUUID(as_uuid=True),
+        default=uuid4,
+        unique=True,
+        nullable=False,
+    )
+    public_key: Mapped[str] = mapped_column(
+        name="public_key", type_=String, nullable=False
+    )
 
 
 class MedicalRole(DataStatus, DataIdentifier, Base):

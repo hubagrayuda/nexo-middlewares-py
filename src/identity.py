@@ -10,8 +10,10 @@ from nexo.database.utils import build_cache_key
 from nexo.enums.expiration import Expiration
 from nexo.enums.status import DataStatus
 from nexo.schemas.connection import ConnectionContext
+from nexo.types.misc import StrOrUUID
 from .models import (
     Base,
+    Client,
     Organization,
     User,
     PrincipalMedicalRole,
@@ -20,7 +22,7 @@ from .models import (
     Principal,
     APIKey,
 )
-from .schemas import PrincipalSchema
+from .schemas import ClientSchema, PrincipalSchema
 
 
 class IdentityProvider:
@@ -38,9 +40,43 @@ class IdentityProvider:
             layer=CacheLayer.MIDDLEWARE,
         )
 
+    async def get_client(
+        self,
+        id: UUID,
+        *,
+        operation_id: UUID,
+        connection_context: ConnectionContext,
+    ) -> ClientSchema:
+        cache_key = build_cache_key("client", str(id), namespace=self._namespace)
+        redis = self._cache.manager.client.get(Connection.ASYNC)
+        redis_data = await redis.get(cache_key)
+        if redis_data is not None:
+            return ClientSchema.model_validate_json(redis_data)
+
+        async with self._database.manager.session.get(
+            Connection.ASYNC,
+            operation_id=operation_id,
+            connection_context=connection_context,
+        ) as session:
+            stmt = select(Client).where(
+                Client.id == id, Client.status == DataStatus.ACTIVE
+            )
+
+            result = await session.execute(stmt)
+            row = result.one_or_none()
+
+            if row is None:
+                raise ValueError(f"Client with ID of '{id}' is not found")
+
+            client = ClientSchema.model_validate(row, from_attributes=True)
+
+        await redis.set(cache_key, client.model_dump_json(), Expiration.EXP_1MO.value)
+
+        return client
+
     async def get_principal(
         self,
-        identifier: str | UUID,
+        identifier: StrOrUUID,
         *,
         operation_id: UUID,
         connection_context: ConnectionContext,

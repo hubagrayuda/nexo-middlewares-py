@@ -1,9 +1,28 @@
+from Crypto.PublicKey import RSA
 from pydantic import Field, field_validator
 from typing import Annotated
-from nexo.enums.status import DataStatus as DataStatusEnum
-from nexo.schemas.mixins.identity import RecordIdentifier
+from uuid import UUID
+from nexo.crypto.key.rsa.enums import KeyType
+from nexo.crypto.key.rsa.loader import with_pycryptodome
+from nexo.enums.status import DataStatus, SimpleDataStatusMixin
+from nexo.schemas.mixins.identity import (
+    SimpleDataIdentifier,
+    RecordIdentifier,
+)
 from nexo.schemas.security.enums import DomainMixin, Domain
 from nexo.types.string import ListOfStrs
+
+
+class ClientSchema(
+    SimpleDataStatusMixin[DataStatus],
+    SimpleDataIdentifier,
+):
+    secret: Annotated[UUID, Field(..., description="Client's Secret")]
+    public_key: Annotated[str, Field(..., description="Client's Public Key")]
+
+    @property
+    def rsa_public_key(self) -> RSA.RsaKey:
+        return with_pycryptodome(KeyType.PUBLIC, extern_key=self.public_key)
 
 
 class OrganizationTypeSchema(RecordIdentifier):
@@ -91,8 +110,8 @@ class PrincipalSchema(
             pmr.medical_role.key
             for pmr in self.medical_roles
             if (
-                pmr.status is DataStatusEnum.ACTIVE
-                and pmr.medical_role.status is DataStatusEnum.ACTIVE
+                pmr.status is DataStatus.ACTIVE
+                and pmr.medical_role.status is DataStatus.ACTIVE
             )
         ]
 
@@ -109,8 +128,8 @@ class PrincipalSchema(
             por.organization_role.key
             for por in self.organization_roles
             if (
-                por.status is DataStatusEnum.ACTIVE
-                and por.organization_role.status is DataStatusEnum.ACTIVE
+                por.status is DataStatus.ACTIVE
+                and por.organization_role.status is DataStatus.ACTIVE
             )
         ]
 
@@ -127,7 +146,7 @@ class PrincipalSchema(
             psr.system_role.key
             for psr in self.system_roles
             if (
-                psr.status is DataStatusEnum.ACTIVE
-                and psr.system_role.status is DataStatusEnum.ACTIVE
+                psr.status is DataStatus.ACTIVE
+                and psr.system_role.status is DataStatus.ACTIVE
             )
         ]

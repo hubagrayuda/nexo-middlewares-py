@@ -25,10 +25,8 @@ from nexo.schemas.operation.system import (
     SuccessfulSystemOperation,
 )
 from nexo.schemas.response import SingleDataResponse, TooManyRequestsResponse
-from nexo.schemas.security.authentication import BaseAuthentication
 from nexo.types.datetime import ListOfDatetimes
 from nexo.types.string import ListOfStrs
-from nexo.types.uuid import OptUUID
 from nexo.utils.exception import extract_details
 from .config import RateLimiterConfig
 from .types import CallNext
@@ -66,28 +64,12 @@ class RateLimiter:
         self._cleanup_task: asyncio.Task | None = None
         self._shutdown_event = asyncio.Event()
 
-    def _generate_key(
-        self,
-        ip_address: str = "unknown",
-        user_id: OptUUID = None,
-        organization_id: OptUUID = None,
-    ) -> str:
-        """Generate a combination key from ip_address, user_id, and organization_id"""
-        return f"{ip_address}|{str(user_id)}|{str(organization_id)}"
-
-    async def _is_rate_limited(
-        self,
-        ip_address: str = "unknown",
-        user_id: OptUUID = None,
-        organization_id: OptUUID = None,
-    ) -> bool:
+    async def _is_rate_limited(self, ip: str = "unknown") -> bool:
         """
-        Check if the combination of ip_address, user_id, and organization_id is rate limited.
+        Check if the ip is rate limited.
 
         Args:
-            ip_address: Client IP address (required)
-            user_id: User ID (optional, can be None or integer >= 1)
-            organization_id: Organization ID (optional, can be None or integer >= 1)
+            ip: Client IP address (required)
 
         Returns:
             True if rate limited, False otherwise
@@ -95,43 +77,26 @@ class RateLimiter:
         async with self._lock:
             now = datetime.now(tz=timezone.utc)
 
-            rate_limit_key = self._generate_key(ip_address, user_id, organization_id)
-
-            self._last_seen[rate_limit_key] = now
+            self._last_seen[ip] = now
 
             # Remove old requests outside the window
-            self._requests[rate_limit_key] = [
+            self._requests[ip] = [
                 timestamp
-                for timestamp in self._requests[rate_limit_key]
+                for timestamp in self._requests[ip]
                 if (now - timestamp).total_seconds() <= self._config.window
             ]
 
             # Check rate limit
-            if len(self._requests[rate_limit_key]) >= self._config.limit:
+            if len(self._requests[ip]) >= self._config.limit:
                 return True
 
             # Record this request
-            self._requests[rate_limit_key].append(now)
+            self._requests[ip].append(now)
             return False
 
     async def dispatch(self, request: Request, call_next: CallNext[Response]):
-        authentication: BaseAuthentication = BaseAuthentication.extract(request)
-        user_id = (
-            authentication.credentials.user.uuid
-            if authentication.credentials.user is not None
-            else None
-        )
-        organization_id = (
-            authentication.credentials.organization.uuid
-            if authentication.credentials.organization is not None
-            else None
-        )
         connection_context = ConnectionContext.from_connection(request)
-        is_rate_limited = await self._is_rate_limited(
-            ip_address=connection_context.ip_address,
-            user_id=user_id,
-            organization_id=organization_id,
-        )
+        is_rate_limited = await self._is_rate_limited(connection_context.ip_address)
         if is_rate_limited:
             return JSONResponse(
                 content=TooManyRequestsResponse().model_dump(mode="json"),
@@ -140,52 +105,33 @@ class RateLimiter:
 
         return await call_next(request)
 
-    async def get_current_count(
-        self,
-        ip_address: str = "unknown",
-        user_id: OptUUID = None,
-        organization_id: OptUUID = None,
-    ) -> int:
-        """Get current request count for the combination key"""
+    async def get_current_count(self, ip: str = "unknown") -> int:
+        """Get current request count for the IP Address"""
         async with self._lock:
             now = datetime.now(tz=timezone.utc)
-            rate_limit_key = self._generate_key(ip_address, user_id, organization_id)
 
             # Remove old requests and count current ones
             valid_requests = [
                 timestamp
-                for timestamp in self._requests[rate_limit_key]
+                for timestamp in self._requests[ip]
                 if (now - timestamp).total_seconds() <= self._config.window
             ]
 
             return len(valid_requests)
 
-    async def get_remaining_requests(
-        self,
-        ip_address: str,
-        user_id: OptUUID = None,
-        organization_id: OptUUID = None,
-    ) -> int:
-        """Get remaining requests allowed for the combination key"""
-        current_count = await self.get_current_count(
-            ip_address, user_id, organization_id
-        )
+    async def get_remaining_requests(self, ip: str) -> int:
+        """Get remaining requests allowed for the IP Address"""
+        current_count = await self.get_current_count(ip)
         return max(0, self._config.limit - current_count)
 
-    async def get_reset_time(
-        self,
-        ip_address: str,
-        user_id: OptUUID = None,
-        organization_id: OptUUID = None,
-    ) -> float:
-        """Get time in seconds until the rate limit resets for the combination key"""
+    async def get_reset_time(self, ip: str) -> float:
+        """Get time in seconds until the rate limit resets for the IP Address"""
         async with self._lock:
             now = datetime.now(tz=timezone.utc)
-            rate_limit_key = self._generate_key(ip_address, user_id, organization_id)
 
             valid_requests = [
                 timestamp
-                for timestamp in self._requests[rate_limit_key]
+                for timestamp in self._requests[ip]
                 if (now - timestamp).total_seconds() <= self._config.window
             ]
 
@@ -201,26 +147,26 @@ class RateLimiter:
         """Clean up old request data to prevent memory growth."""
         async with self._lock:
             now = datetime.now(tz=timezone.utc)
-            inactive_keys: ListOfStrs = []
+            inactive_ips: ListOfStrs = []
 
-            for key in list(self._requests.keys()):
-                # Remove keys with empty request lists
-                if not self._requests[key]:
-                    inactive_keys.append(key)
+            for ip in list(self._requests.keys()):
+                # Remove ips with empty request lists
+                if not self._requests[ip]:
+                    inactive_ips.append(ip)
                     continue
 
-                # Remove keys that haven't been active recently
+                # Remove ips that haven't been active recently
                 last_active = self._last_seen.get(
-                    key, datetime.min.replace(tzinfo=timezone.utc)
+                    ip, datetime.min.replace(tzinfo=timezone.utc)
                 )
                 if (now - last_active).total_seconds() > self._config.idle_timeout:
-                    inactive_keys.append(key)
+                    inactive_ips.append(ip)
 
-            if len(inactive_keys) > 0:
-                # Clean up inactive keys
-                for key in inactive_keys:
-                    self._requests.pop(key, None)
-                    self._last_seen.pop(key, None)
+            if len(inactive_ips) > 0:
+                # Clean up inactive ips
+                for ip in inactive_ips:
+                    self._requests.pop(ip, None)
+                    self._last_seen.pop(ip, None)
 
                 operation = SuccessfulSystemOperation[
                     SingleDataResponse[Keys[ListOfStrs], None]
@@ -229,7 +175,7 @@ class RateLimiter:
                     id=operation_id,
                     context=self.operation_context,
                     timestamp=Timestamp.completed_now(now),
-                    summary=f"Successfully cleaned up {len(inactive_keys)} inactive keys in RateLimiter",
+                    summary=f"Successfully cleaned up {len(inactive_ips)} inactive IP Address(s) in RateLimiter",
                     connection_context=None,
                     authentication=None,
                     authorization=None,
@@ -238,7 +184,7 @@ class RateLimiter:
                         type=SystemOperationType.BACKGROUND_JOB, details=None
                     ),
                     response=SingleDataResponse[Keys[ListOfStrs], None](
-                        data=Keys[ListOfStrs](keys=inactive_keys),
+                        data=Keys[ListOfStrs](keys=inactive_ips),
                         metadata=None,
                         other=None,
                     ),

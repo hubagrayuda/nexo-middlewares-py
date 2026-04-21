@@ -10,6 +10,7 @@ from nexo.enums.system import SystemRole
 from nexo.enums.user import UserType
 from nexo.schemas.application import ApplicationContext, OptApplicationContext
 from nexo.schemas.connection import ConnectionContext
+from nexo.schemas.operation.extractor import extract_operation_id
 from nexo.schemas.security.api_key import validate as validate_api_key
 from nexo.schemas.security.authentication import (
     RequestCredentials,
@@ -293,9 +294,7 @@ class Backend(AuthenticationBackend):
         self, conn: HTTPConnection
     ) -> Tuple[RequestCredentials, RequestUser]:
         """Authentication flow"""
-        operation_id = getattr(conn.state, "operation_id", None)
-        if not operation_id or not isinstance(operation_id, UUID):
-            raise AuthenticationError("Unable to determine operation_id")
+        operation_id = extract_operation_id(conn=conn)
 
         connection_context = ConnectionContext.from_connection(conn)
         authorization = BaseAuthorization.extract(conn=conn, auto_error=False)

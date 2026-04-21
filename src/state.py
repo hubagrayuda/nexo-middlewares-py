@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from fastapi import status
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -11,6 +12,7 @@ from nexo.schemas.operation.enums import IdSource
 from nexo.schemas.operation.extractor import extract_operation_id
 from nexo.schemas.response import InternalServerErrorResponse
 from nexo.schemas.security.authorization import AuthorizationFactory
+from nexo.schemas.security.client import ClientContext
 from nexo.schemas.security.impersonation import Impersonation
 from nexo.utils.exception import extract_details
 
@@ -51,9 +53,16 @@ class StateMiddleware:
             # Connection ID
             scope["state"]["connection_id"] = uuid4()
 
+            # Executed At
+            scope["state"]["executed_at"] = datetime.now(tz=timezone.utc)
+
             # Authorization
             authorization = AuthorizationFactory.extract(conn=conn, auto_error=False)
             scope["state"]["authorization"] = authorization
+
+            # Client Context
+            client_context = ClientContext.extract(conn=conn)
+            scope["state"]["client_context"] = client_context
 
             # Impersonation
             impersonation = Impersonation.extract(conn)

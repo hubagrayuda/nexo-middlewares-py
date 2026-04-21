@@ -19,13 +19,9 @@ ALLOW_HEADERS: SeqOfStrs = (
     Header.COOKIE.value,
     Header.X_API_KEY.value,
     Header.X_CLIENT_ID.value,
-    Header.X_CLIENT_SECRET.value,
     Header.X_OPERATION_ID.value,
-    Header.X_ORGANIZATION_ID.value,
+    Header.X_PRINCIPAL_ID.value,
     Header.X_SIGNATURE.value,
-    Header.X_SPAN_ID.value,
-    Header.X_TRACE_ID.value,
-    Header.X_USER_ID.value,
 )
 
 EXPOSE_HEADERS: SeqOfStrs = (
@@ -33,17 +29,11 @@ EXPOSE_HEADERS: SeqOfStrs = (
     Header.LOCATION.value,
     Header.RETRY_AFTER.value,
     Header.WWW_AUTHENTICATE.value,
-    Header.X_CLIENT_ID.value,
-    Header.X_CLIENT_SECRET.value,
     Header.X_COMPLETED_AT.value,
     Header.X_CONNECTION_ID.value,
     Header.X_DURATION.value,
     Header.X_EXECUTED_AT.value,
-    Header.X_NEW_AUTHORIZATION.value,
     Header.X_OPERATION_ID.value,
-    Header.X_ORGANIZATION_ID.value,
+    Header.X_SERVER_ID.value,
     Header.X_SIGNATURE.value,
-    Header.X_SPAN_ID.value,
-    Header.X_TRACE_ID.value,
-    Header.X_USER_ID.value,
 )

@@ -13,6 +13,12 @@ class AuthenticationConfig(BaseModel):
     strict: Annotated[bool, Field(True, description="Strict authentication")] = True
 
 
+class CoreConfig(BaseModel):
+    strict_client: Annotated[bool, Field(False, description="Strict client check")] = (
+        False
+    )
+
+
 class CORSConfig(BaseModel):
     allow_origins: Annotated[SeqOfStrs, Field([], description="Allowed origins")] = []
     allow_methods: Annotated[
@@ -29,7 +35,7 @@ class CORSConfig(BaseModel):
     ] = EXPOSE_HEADERS
 
 
-class LoggerConfig(BaseModel):
+class MonitorConfig(BaseModel):
     max_size: Annotated[int, Field(10_000, description="Max log size (in bytes)")] = (
         10_000
     )
@@ -68,32 +74,48 @@ class MiddlewareConfig(BaseModel):
     authentication: Annotated[
         AuthenticationConfig,
         Field(
-            AuthenticationConfig(),
+            default_factory=AuthenticationConfig,
             description="Authentication middleware's configurations",
         ),
-    ] = AuthenticationConfig()
+    ]
+    client: Annotated[
+        CoreConfig,
+        Field(
+            default_factory=CoreConfig,
+            description="Core middleware's configurations",
+        ),
+    ]
     cors: Annotated[
         CORSConfig,
-        Field(CORSConfig(), description="CORS middleware's configurations"),
-    ] = CORSConfig()
-    logger: Annotated[
-        LoggerConfig,
-        Field(LoggerConfig(), description="Logger middleware's configurations"),
-    ] = LoggerConfig()
+        Field(
+            default_factory=CORSConfig, description="CORS middleware's configurations"
+        ),
+    ]
+    monitor: Annotated[
+        MonitorConfig,
+        Field(
+            default_factory=MonitorConfig,
+            description="Monitor middleware's configurations",
+        ),
+    ]
     rate_limiter: Annotated[
         RateLimiterConfig,
         Field(
-            RateLimiterConfig(),
+            default_factory=RateLimiterConfig,
             description="Rate limiter's configurations",
         ),
-    ] = RateLimiterConfig()
+    ]
     security: Annotated[
-        SecurityConfig, Field(SecurityConfig(), description="Security's configurations")
-    ] = SecurityConfig()
+        SecurityConfig,
+        Field(default_factory=SecurityConfig, description="Security's configurations"),
+    ]
 
 
 class MiddlewareConfigMixin(BaseModel):
     middleware: Annotated[
         MiddlewareConfig,
-        Field(MiddlewareConfig(), description="Middleware config"),
-    ] = MiddlewareConfig()
+        Field(
+            default_factory=MiddlewareConfig,  # pyright: ignore[reportArgumentType]
+            description="Middleware config",
+        ),
+    ]
