@@ -58,7 +58,7 @@ class CoreMiddleware:
         if not body_bytes:
             return "EMPTY-PAYLOAD"
 
-        return hash(Mode.DIGEST, message=body_bytes).decode()
+        return hash(Mode.DIGEST, message=body_bytes).hex()
 
     async def _compute_response_body_hash(
         self, response: Response
@@ -76,7 +76,7 @@ class CoreMiddleware:
             return "EMPTY-PAYLOAD", new_response
 
         # 3. Hash the extracted bytes
-        body_hash = hash(Mode.DIGEST, message=body_bytes).decode()
+        body_hash = hash(Mode.DIGEST, message=body_bytes).hex()
 
         return body_hash, new_response
 
